@@ -77,6 +77,16 @@
   </div>
 </div>
 
+<div class="card">
+  <h2 style="font-size:1rem;margin:0 0 8px;">スマホ内の写真・PDFを送信</h2>
+  <p class="note" style="margin-bottom:8px;">すでに撮影済みの写真や、請求書・通帳のPDFなどをまとめて選んで送信できます。</p>
+  <input type="file" id="filePicker" accept="image/*,application/pdf" multiple>
+  <ul id="fileList" style="list-style:none;padding:0;margin:12px 0 0;font-size:0.85rem;"></ul>
+  <div class="row">
+    <button id="btnSendFiles" disabled>選択したファイルを送信</button>
+  </div>
+</div>
+
 <div id="status"></div>
 
 <script>
@@ -106,9 +116,15 @@ function setStatus(msg, type) {
   statusEl.className = type || '';
 }
 
+const filePicker = document.getElementById('filePicker');
+const fileList = document.getElementById('fileList');
+const btnSendFiles = document.getElementById('btnSendFiles');
+let selectedFiles = [];
+
 if (!TOKEN) {
   setStatus('URLに顧客トークンが含まれていません。担当者から送られたURLをそのまま開いてください。', 'error');
   btnStart.disabled = true;
+  filePicker.disabled = true;
 }
 
 async function startCamera() {
@@ -206,7 +222,7 @@ async function sendToDrive() {
     const res = await fetch(GAS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ image: base64, filename, token: TOKEN })
+      body: JSON.stringify({ image: base64, filename, mimeType: 'image/jpeg', token: TOKEN })
     });
     const data = await res.json();
     if (data.ok) {
@@ -222,6 +238,62 @@ async function sendToDrive() {
   }
 }
 
+function renderFileList() {
+  fileList.innerHTML = '';
+  selectedFiles.forEach((f, i) => {
+    const li = document.createElement('li');
+    li.id = 'file-status-' + i;
+    li.textContent = `${f.name}: 待機中`;
+    fileList.appendChild(li);
+  });
+}
+
+filePicker.addEventListener('change', () => {
+  selectedFiles = Array.from(filePicker.files);
+  renderFileList();
+  btnSendFiles.disabled = selectedFiles.length === 0;
+});
+
+async function sendFiles() {
+  if (GAS_URL.indexOf('ここに') === 0) {
+    setStatus('GAS_URL が設定されていません。HTMLファイル内の GAS_URL を、デプロイ後のウェブアプリURLに書き換えてください。', 'error');
+    return;
+  }
+  btnSendFiles.disabled = true;
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const prefix = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+
+  for (let i = 0; i < selectedFiles.length; i++) {
+    const file = selectedFiles[i];
+    const li = document.getElementById('file-status-' + i);
+    li.textContent = `${file.name}: 送信中…`;
+    try {
+      const base64 = await blobToBase64(file);
+      const filename = `upload_${prefix}_${i}_${file.name}`;
+      const res = await fetch(GAS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          image: base64,
+          filename,
+          mimeType: file.type || 'application/octet-stream',
+          token: TOKEN
+        })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        li.textContent = `${file.name}: 完了`;
+      } else {
+        throw new Error(data.error || '不明なエラー');
+      }
+    } catch (e) {
+      li.textContent = `${file.name}: 失敗(${e.message})`;
+    }
+  }
+  btnSendFiles.disabled = false;
+}
+
 btnStart.addEventListener('click', startCamera);
 btnSwitch.addEventListener('click', () => {
   facingMode = facingMode === 'environment' ? 'user' : 'environment';
@@ -230,6 +302,7 @@ btnSwitch.addEventListener('click', () => {
 btnShoot.addEventListener('click', shoot);
 btnRetake.addEventListener('click', retake);
 btnSend.addEventListener('click', sendToDrive);
+btnSendFiles.addEventListener('click', sendFiles);
 
 window.addEventListener('beforeunload', stopCamera);
 </script>
