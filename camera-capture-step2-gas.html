@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>カメラ撮影→Googleドライブ保存</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic", sans-serif;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 16px;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h1 { font-size: 1.1rem; margin-bottom: 4px; }
+  .note { font-size: 0.8rem; color: #666; margin-bottom: 16px; }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  }
+  video, canvas, img.preview {
+    width: 100%;
+    border-radius: 8px;
+    background: #000;
+    display: block;
+  }
+  canvas { display: none; }
+  .row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  button {
+    flex: 1;
+    min-width: 100px;
+    padding: 12px;
+    font-size: 0.95rem;
+    border: none;
+    border-radius: 8px;
+    background: #1a73e8;
+    color: #fff;
+    cursor: pointer;
+  }
+  button:disabled { background: #aaa; cursor: not-allowed; }
+  button.secondary { background: #5f6368; }
+  #status {
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    margin-top: 12px;
+    color: #333;
+  }
+  #status.error { color: #d93025; }
+  #status.ok { color: #1e8e3e; }
+  a.result-link { word-break: break-all; }
+</style>
+</head>
+<body>
+
+<h1>カメラ撮影 → Googleドライブ保存(Step2)</h1>
+<p class="note">撮影した画像はGoogleドライブの指定フォルダに自動保存されます。</p>
+
+<div class="card">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <img id="preview" class="preview" style="display:none;">
+  <div class="row">
+    <button id="btnStart">カメラ起動</button>
+    <button id="btnSwitch" class="secondary" disabled>前後切替</button>
+  </div>
+  <div class="row">
+    <button id="btnShoot" disabled>撮影</button>
+    <button id="btnRetake" class="secondary" style="display:none;">撮り直し</button>
+  </div>
+  <div class="row">
+    <button id="btnSend" style="display:none;">送信(ドライブに保存)</button>
+  </div>
+</div>
+
+<div id="status"></div>
+
+<script>
+// ↓↓↓ GASを「ウェブアプリ」としてデプロイした後に表示されるURLを、ここに貼ってください ↓↓↓
+const GAS_URL = "https://script.google.com/macros/s/AKfycbxxRSsk49ivNhLan-pW49Q6qyU0812RIo7VC5cv_Ui4kHFkpZcqG-H3sDiOCY_WXLZj/exec";
+// ↑↑↑ ここまで ↑↑↑
+
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const preview = document.getElementById('preview');
+const statusEl = document.getElementById('status');
+
+const btnStart = document.getElementById('btnStart');
+const btnSwitch = document.getElementById('btnSwitch');
+const btnShoot = document.getElementById('btnShoot');
+const btnRetake = document.getElementById('btnRetake');
+const btnSend = document.getElementById('btnSend');
+
+let currentStream = null;
+let capturedBlob = null;
+let facingMode = 'environment';
+
+function setStatus(msg, type) {
+  statusEl.textContent = msg;
+  statusEl.className = type || '';
+}
+
+async function startCamera() {
+  stopCamera();
+  setStatus('カメラを起動しています…');
+  try {
+    currentStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facingMode } },
+      audio: false
+    });
+  } catch (e) {
+    try {
+      currentStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    } catch (e2) {
+      setStatus('カメラを起動できませんでした: ' + e2.message, 'error');
+      return;
+    }
+  }
+  video.srcObject = currentStream;
+  video.style.display = 'block';
+  preview.style.display = 'none';
+  btnShoot.disabled = false;
+  btnSwitch.disabled = false;
+  btnRetake.style.display = 'none';
+  btnSend.style.display = 'none';
+  setStatus('カメラ起動完了。撮影ボタンを押してください。', 'ok');
+}
+
+function stopCamera() {
+  if (currentStream) {
+    currentStream.getTracks().forEach(t => t.stop());
+    currentStream = null;
+  }
+}
+
+function shoot() {
+  const w = video.videoWidth;
+  const h = video.videoHeight;
+  if (!w || !h) {
+    setStatus('カメラの映像がまだ準備できていません。', 'error');
+    return;
+  }
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+  canvas.toBlob(blob => {
+    capturedBlob = blob;
+    preview.src = URL.createObjectURL(blob);
+    preview.style.display = 'block';
+    video.style.display = 'none';
+    stopCamera();
+    btnShoot.disabled = true;
+    btnSwitch.disabled = true;
+    btnRetake.style.display = 'block';
+    btnSend.style.display = 'block';
+    setStatus('撮影しました。内容を確認して送信してください。');
+  }, 'image/jpeg', 0.92);
+}
+
+function retake() {
+  capturedBlob = null;
+  preview.style.display = 'none';
+  btnRetake.style.display = 'none';
+  btnSend.style.display = 'none';
+  startCamera();
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function sendToDrive() {
+  if (GAS_URL.indexOf('ここに') === 0) {
+    setStatus('GAS_URL が設定されていません。HTMLファイル内の GAS_URL を、デプロイ後のウェブアプリURLに書き換えてください。', 'error');
+    return;
+  }
+  if (!capturedBlob) {
+    setStatus('先に撮影してください。', 'error');
+    return;
+  }
+  setStatus('送信中…');
+  btnSend.disabled = true;
+  try {
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const filename = `receipt_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.jpg`;
+    const base64 = await blobToBase64(capturedBlob);
+
+    // Content-Type を text/plain にすることで、GAS側とのCORSプリフライトを回避しています
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ image: base64, filename })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      setStatus('送信完了: ' + data.filename, 'ok');
+      statusEl.innerHTML += `<br><a class="result-link" href="${data.url}" target="_blank" rel="noopener">Driveで開く</a>`;
+    } else {
+      throw new Error(data.error || '不明なエラー');
+    }
+  } catch (e) {
+    setStatus('送信に失敗しました: ' + e.message, 'error');
+  } finally {
+    btnSend.disabled = false;
+  }
+}
+
+btnStart.addEventListener('click', startCamera);
+btnSwitch.addEventListener('click', () => {
+  facingMode = facingMode === 'environment' ? 'user' : 'environment';
+  startCamera();
+});
+btnShoot.addEventListener('click', shoot);
+btnRetake.addEventListener('click', retake);
+btnSend.addEventListener('click', sendToDrive);
+
+window.addEventListener('beforeunload', stopCamera);
+</script>
+</body>
+</html>
