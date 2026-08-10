@@ -99,9 +99,16 @@ let currentStream = null;
 let capturedBlob = null;
 let facingMode = 'environment';
 
+const TOKEN = new URLSearchParams(window.location.search).get('token');
+
 function setStatus(msg, type) {
   statusEl.textContent = msg;
   statusEl.className = type || '';
+}
+
+if (!TOKEN) {
+  setStatus('URLに顧客トークンが含まれていません。担当者から送られたURLをそのまま開いてください。', 'error');
+  btnStart.disabled = true;
 }
 
 async function startCamera() {
@@ -199,7 +206,7 @@ async function sendToDrive() {
     const res = await fetch(GAS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ image: base64, filename })
+      body: JSON.stringify({ image: base64, filename, token: TOKEN })
     });
     const data = await res.json();
     if (data.ok) {
