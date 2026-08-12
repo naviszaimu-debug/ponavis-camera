@@ -326,12 +326,19 @@ async function startCamera() {
   setStatus('カメラを起動しています…');
   try {
     currentStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: facingMode } },
+      video: {
+        facingMode: { ideal: facingMode },
+        width: { ideal: 3840 },
+        height: { ideal: 2160 }
+      },
       audio: false
     });
   } catch (e) {
     try {
-      currentStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      currentStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 3840 }, height: { ideal: 2160 } },
+        audio: false
+      });
     } catch (e2) {
       setStatus('カメラを起動できませんでした: ' + e2.message, 'error');
       return;
@@ -375,7 +382,7 @@ function shoot() {
     capturedQueue.push({ blob, url: URL.createObjectURL(blob) });
     renderQueue();
     setStatus(capturedQueue.length + '枚 撮影済み。続けて撮影するか、送信してください。', 'ok');
-  }, 'image/jpeg', 0.92);
+  }, 'image/jpeg', 0.95);
 }
 
 function renderQueue() {
