@@ -171,6 +171,7 @@
   <div id="queueThumbs" class="thumb-row"></div>
   <div class="row">
     <button id="btnStart">カメラ起動</button>
+    <button id="btnStop" class="secondary" style="display:none;">カメラを停止</button>
     <button id="btnSwitch" class="secondary" disabled>前後切替</button>
   </div>
   <div class="row">
@@ -217,6 +218,7 @@ const messageBoxEl = document.getElementById('messageBox');
 const queueThumbs = document.getElementById('queueThumbs');
 
 const btnStart = document.getElementById('btnStart');
+const btnStop = document.getElementById('btnStop');
 const btnSwitch = document.getElementById('btnSwitch');
 const btnShoot = document.getElementById('btnShoot');
 const btnRetake = document.getElementById('btnRetake');
@@ -338,6 +340,8 @@ async function startCamera() {
   video.srcObject = currentStream;
   btnShoot.disabled = false;
   btnSwitch.disabled = false;
+  btnStart.style.display = 'none';
+  btnStop.style.display = 'block';
   setStatus('カメラ起動完了。続けて何枚でも撮影できます。', 'ok');
 }
 
@@ -346,6 +350,15 @@ function stopCamera() {
     currentStream.getTracks().forEach(t => t.stop());
     currentStream = null;
   }
+}
+
+function stopCameraManually() {
+  stopCamera();
+  btnShoot.disabled = true;
+  btnSwitch.disabled = true;
+  btnStart.style.display = 'block';
+  btnStop.style.display = 'none';
+  setStatus('カメラを停止しました。', 'ok');
 }
 
 function shoot() {
@@ -504,6 +517,7 @@ async function sendFiles() {
 }
 
 btnStart.addEventListener('click', startCamera);
+btnStop.addEventListener('click', stopCameraManually);
 btnSwitch.addEventListener('click', () => {
   facingMode = facingMode === 'environment' ? 'user' : 'environment';
   startCamera();
