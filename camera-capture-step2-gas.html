@@ -124,6 +124,34 @@
   #status.error { color: #d93025; }
   #status.ok { color: #1e8e3e; }
   a.result-link { word-break: break-all; }
+  .thumb img { cursor: pointer; }
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-overlay img {
+    max-width: 90%;
+    max-height: 90%;
+    border-radius: 8px;
+  }
+  .modal-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.9);
+    color: #222;
+    font-size: 1.2rem;
+    border: none;
+  }
 </style>
 </head>
 <body>
@@ -173,6 +201,11 @@
 
 <div id="status"></div>
 
+<div id="imageModal" class="modal-overlay">
+  <button id="modalClose" class="modal-close">×</button>
+  <img id="modalImg" src="" alt="">
+</div>
+
 <script>
 const GAS_URL = "https://script.google.com/macros/s/AKfycbxxRSsk49ivNhLan-pW49Q6qyU0812RIo7VC5cv_Ui4kHFkpZcqG-H3sDiOCY_WXLZj/exec";
 
@@ -195,6 +228,21 @@ const btnSendFiles = document.getElementById('btnSendFiles');
 
 const pendingFilesEl = document.getElementById('pendingFiles');
 const pendingEmptyEl = document.getElementById('pendingEmpty');
+
+const imageModal = document.getElementById('imageModal');
+const modalImg = document.getElementById('modalImg');
+const modalClose = document.getElementById('modalClose');
+
+function openImageModal(src, alt) {
+  if (!src) return;
+  modalImg.src = src;
+  modalImg.alt = alt || '';
+  imageModal.classList.add('open');
+}
+modalClose.addEventListener('click', () => imageModal.classList.remove('open'));
+imageModal.addEventListener('click', (e) => {
+  if (e.target === imageModal) imageModal.classList.remove('open');
+});
 
 let currentStream = null;
 let capturedQueue = [];
@@ -242,6 +290,7 @@ function renderPendingFiles(files) {
     const img = document.createElement('img');
     img.src = f.thumbnail || '';
     img.alt = f.name;
+    img.addEventListener('click', () => openImageModal(f.thumbnail, f.name));
     const del = document.createElement('button');
     del.className = 'thumb-del';
     del.textContent = '×';
@@ -323,6 +372,7 @@ function renderQueue() {
     wrap.className = 'thumb';
     const img = document.createElement('img');
     img.src = item.url;
+    img.addEventListener('click', () => openImageModal(item.url, ''));
     const del = document.createElement('button');
     del.className = 'thumb-del';
     del.textContent = '×';
