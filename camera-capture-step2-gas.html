@@ -152,6 +152,60 @@
     font-size: 1.2rem;
     border: none;
   }
+  /* 連続撮影モード中、カメラカードを画面全体に占有させる(スクロールなしで撮影ボタンに届くようにする) */
+  .camera-card.fullscreen-mode {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    margin: 0;
+    border-radius: 0;
+    background: #111;
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    box-sizing: border-box;
+    overflow-y: auto;
+  }
+  .camera-card.fullscreen-mode video {
+    flex: 1 1 auto;
+    min-height: 0;
+    object-fit: cover;
+  }
+  .camera-card.fullscreen-mode .card-title { color: #fff; }
+  .burst-badge {
+    background: #d93025;
+    color: #fff;
+    font-weight: 600;
+    text-align: center;
+    padding: 8px 12px;
+    border-radius: 8px;
+    margin-top: 10px;
+  }
+  .thumb-check {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    z-index: 2;
+  }
+  .thumb-group-badge {
+    position: absolute;
+    bottom: 2px;
+    left: 2px;
+    min-width: 20px;
+    width: auto;
+    height: 20px;
+    padding: 0 4px;
+    border: none;
+    border-radius: 10px;
+    background: rgba(26,115,232,0.9);
+    color: #fff;
+    font-size: 0.75rem;
+    line-height: 20px;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -164,11 +218,15 @@
 <div id="greeting" class="greeting"></div>
 <div id="messageBox" class="message-box" style="display:none;"></div>
 
-<div class="card">
+<div class="card camera-card" id="cameraCard">
   <h2 class="card-title">カメラで撮影</h2>
   <video id="video" autoplay playsinline muted></video>
   <canvas id="canvas"></canvas>
+  <div id="burstBadge" class="burst-badge" style="display:none;"></div>
   <div id="queueThumbs" class="thumb-row"></div>
+  <div id="bulkUngroupBar" class="row" style="display:none;">
+    <button id="btnBulkUngroup" class="secondary" type="button">選択した写真をグループから外す</button>
+  </div>
   <div class="row">
     <button id="btnStart">カメラ起動</button>
     <button id="btnStop" class="secondary" style="display:none;">カメラを停止</button>
@@ -178,6 +236,11 @@
     <button id="btnShoot" disabled>撮影</button>
     <button id="btnRetake" class="secondary" style="display:none;">直前の1枚を削除</button>
   </div>
+  <div class="row">
+    <button id="btnBurstStart" class="secondary" disabled>連続撮影モード開始</button>
+    <button id="btnBurstEnd" style="display:none;">連続撮影モード終了</button>
+  </div>
+  <p class="note" id="burstHint" style="margin:4px 0 0;">通帳や長いレシートなど、複数枚まとめて1つの証憑として送りたい時だけ使ってください。</p>
   <div class="row">
     <button id="btnSend" style="display:none;">送信(ドライブに保存)</button>
   </div>
@@ -219,12 +282,18 @@ const greetingEl = document.getElementById('greeting');
 const messageBoxEl = document.getElementById('messageBox');
 const queueThumbs = document.getElementById('queueThumbs');
 
+const cameraCard = document.getElementById('cameraCard');
 const btnStart = document.getElementById('btnStart');
 const btnStop = document.getElementById('btnStop');
 const btnSwitch = document.getElementById('btnSwitch');
 const btnShoot = document.getElementById('btnShoot');
 const btnRetake = document.getElementById('btnRetake');
 const btnSend = document.getElementById('btnSend');
+const btnBurstStart = document.getElementById('btnBurstStart');
+const btnBurstEnd = document.getElementById('btnBurstEnd');
+const burstBadge = document.getElementById('burstBadge');
+const bulkUngroupBar = document.getElementById('bulkUngroupBar');
+const btnBulkUngroup = document.getElementById('btnBulkUngroup');
 
 const filePicker = document.getElementById('filePicker');
 const fileList = document.getElementById('fileList');
@@ -249,9 +318,21 @@ imageModal.addEventListener('click', (e) => {
 });
 
 let currentStream = null;
-let capturedQueue = []; // { blob, url }
+let capturedQueue = []; // { id, blob, url, groupId, groupLabel }
+let itemSeqCounter = 0;
 let selectedFiles = [];
 let facingMode = 'environment';
+
+// 連続撮影モード(複数枚を1つの証憑としてグルーピングする機能)の状態
+let burstActive = false;
+let burstSeq = 0;          // モードを開始した回数。そのままグループIDとして使う
+let currentGroupId = null;
+let selectedItemIds = new Set(); // グループから外す対象として選択中の撮影データのid
+
+function circledNumber(n) {
+  if (n >= 1 && n <= 20) return String.fromCodePoint(0x2460 + (n - 1));
+  return '(' + n + ')';
+}
 
 const TOKEN = new URLSearchParams(window.location.search).get('token');
 
@@ -324,6 +405,23 @@ async function deletePendingFile(fileId, wrapEl) {
   }
 }
 
+function enterCameraFullscreen() {
+  cameraCard.classList.add('fullscreen-mode');
+  if (cameraCard.requestFullscreen) {
+    // 対応ブラウザ(主にAndroid Chrome)では、OSのアドレスバー等も含めて画面を占有する。
+    // 未対応環境(iOS Safari等)でも上のCSSクラスだけで「スクロール不要」は実現できるため、
+    // 失敗しても何もしない(no-opでcatch)。
+    cameraCard.requestFullscreen().catch(() => {});
+  }
+}
+
+function exitCameraFullscreen() {
+  cameraCard.classList.remove('fullscreen-mode');
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+
 async function startCamera() {
   stopCamera();
   setStatus('カメラを起動しています…');
@@ -350,8 +448,10 @@ async function startCamera() {
   video.srcObject = currentStream;
   btnShoot.disabled = false;
   btnSwitch.disabled = false;
+  btnBurstStart.disabled = false;
   btnStart.style.display = 'none';
   btnStop.style.display = 'block';
+  enterCameraFullscreen();
   setStatus('カメラ起動完了。続けて何枚でも撮影できます。', 'ok');
 }
 
@@ -364,8 +464,11 @@ function stopCamera() {
 
 function stopCameraManually() {
   stopCamera();
+  if (burstActive) endBurstMode();
+  exitCameraFullscreen();
   btnShoot.disabled = true;
   btnSwitch.disabled = true;
+  btnBurstStart.disabled = true;
   btnStart.style.display = 'block';
   btnStop.style.display = 'none';
   setStatus('カメラを停止しました。', 'ok');
@@ -382,8 +485,15 @@ function shoot() {
   canvas.height = h;
   canvas.getContext('2d').drawImage(video, 0, 0, w, h);
   canvas.toBlob(blob => {
-    capturedQueue.push({ blob, url: URL.createObjectURL(blob) });
+    capturedQueue.push({
+      id: ++itemSeqCounter,
+      blob,
+      url: URL.createObjectURL(blob),
+      groupId: burstActive ? currentGroupId : null,
+      groupLabel: burstActive ? circledNumber(burstSeq) : null
+    });
     renderQueue();
+    updateBurstBadge();
     setStatus(capturedQueue.length + '枚 撮影済み。続けて撮影するか、送信してください。', 'ok');
   }, 'image/jpeg', 0.95);
 }
@@ -393,29 +503,107 @@ function renderQueue() {
   capturedQueue.forEach((item, i) => {
     const wrap = document.createElement('div');
     wrap.className = 'thumb';
+
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'thumb-check';
+    check.title = '複数選択してまとめてグループから外す';
+    check.checked = selectedItemIds.has(item.id);
+    check.addEventListener('change', () => {
+      if (check.checked) selectedItemIds.add(item.id);
+      else selectedItemIds.delete(item.id);
+      updateBulkUngroupBar();
+    });
+    wrap.appendChild(check);
+
     const img = document.createElement('img');
     img.src = item.url;
     img.addEventListener('click', () => openImageModal(item.url, ''));
+    wrap.appendChild(img);
+
+    if (item.groupId) {
+      const badge = document.createElement('button');
+      badge.type = 'button';
+      badge.className = 'thumb-group-badge';
+      badge.textContent = item.groupLabel;
+      badge.title = 'タップでこの1枚だけグループから外す';
+      badge.addEventListener('click', () => ungroupItems([item.id]));
+      wrap.appendChild(badge);
+    }
+
     const del = document.createElement('button');
     del.className = 'thumb-del';
     del.textContent = '×';
     del.addEventListener('click', () => {
       capturedQueue.splice(i, 1);
+      selectedItemIds.delete(item.id);
       renderQueue();
+      updateBurstBadge();
     });
-    wrap.appendChild(img);
     wrap.appendChild(del);
+
     queueThumbs.appendChild(wrap);
   });
   const hasItems = capturedQueue.length > 0;
-  btnSend.style.display = hasItems ? 'block' : 'none';
+  // 連続撮影モード中は送信ボタンを隠す(自動送信はしない。モード終了で再表示されるだけ)
+  btnSend.style.display = (hasItems && !burstActive) ? 'block' : 'none';
   btnSend.disabled = !hasItems;
   btnRetake.style.display = hasItems ? 'block' : 'none';
+  updateBulkUngroupBar();
 }
 
 function retakeLast() {
-  capturedQueue.pop();
+  const removed = capturedQueue.pop();
+  if (removed) selectedItemIds.delete(removed.id);
   renderQueue();
+  updateBurstBadge();
+}
+
+function updateBulkUngroupBar() {
+  const n = selectedItemIds.size;
+  bulkUngroupBar.style.display = n > 0 ? 'block' : 'none';
+  btnBulkUngroup.textContent = '選択した' + n + '枚をグループから外す';
+}
+
+function ungroupItems(ids) {
+  const idSet = new Set(ids);
+  capturedQueue.forEach(item => {
+    if (idSet.has(item.id)) {
+      item.groupId = null;
+      item.groupLabel = null;
+    }
+  });
+  ids.forEach(id => selectedItemIds.delete(id));
+  renderQueue();
+  updateBurstBadge();
+}
+
+function startBurstMode() {
+  burstActive = true;
+  burstSeq += 1;
+  currentGroupId = String(burstSeq);
+  btnBurstStart.style.display = 'none';
+  btnBurstEnd.style.display = 'block';
+  updateBurstBadge();
+  renderQueue();
+  setStatus('連続撮影モードを開始しました。同じ証憑のページを続けて撮影してください。', 'ok');
+}
+
+function endBurstMode() {
+  burstActive = false;
+  currentGroupId = null;
+  btnBurstStart.style.display = 'block';
+  btnBurstEnd.style.display = 'none';
+  burstBadge.style.display = 'none';
+  renderQueue();
+  setStatus('連続撮影モードを終了しました。内容を確認してから送信してください。', 'ok');
+}
+
+function updateBurstBadge() {
+  if (!burstActive) { burstBadge.style.display = 'none'; return; }
+  const count = capturedQueue.filter(item => item.groupId === currentGroupId).length;
+  burstBadge.textContent = '連続撮影モード中(' + count + '枚)';
+  burstBadge.style.display = 'block';
 }
 
 function blobToBase64(blob) {
@@ -437,18 +625,45 @@ async function sendQueue() {
   const total = capturedQueue.length;
   const results = [];
 
+  // グループごとの総ページ数を先に数えておく(送信中に「N枚中の何枚目」を確定させるため)
+  const groupTotals = {};
+  capturedQueue.forEach(item => {
+    if (item.groupId) groupTotals[item.groupId] = (groupTotals[item.groupId] || 0) + 1;
+  });
+  const groupSeenCounts = {};
+
   for (let i = 0; i < capturedQueue.length; i++) {
     setStatus('送信中… (' + (i + 1) + '/' + total + ')');
     try {
       const now = new Date();
       const pad = n => String(n).padStart(2, '0');
-      const filename = `receipt_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}_${i}.jpg`;
-      const base64 = await blobToBase64(capturedQueue[i].blob);
+      const item = capturedQueue[i];
+
+      let groupPage = null;
+      let groupTotal = null;
+      let groupSuffix = '';
+      if (item.groupId) {
+        groupSeenCounts[item.groupId] = (groupSeenCounts[item.groupId] || 0) + 1;
+        groupPage = groupSeenCounts[item.groupId];
+        groupTotal = groupTotals[item.groupId];
+        groupSuffix = `_g${item.groupId}p${groupPage}of${groupTotal}`;
+      }
+
+      const filename = `receipt_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}_${i}${groupSuffix}.jpg`;
+      const base64 = await blobToBase64(item.blob);
 
       const res = await fetch(GAS_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ image: base64, filename, mimeType: 'image/jpeg', token: TOKEN })
+        body: JSON.stringify({
+          image: base64,
+          filename,
+          mimeType: 'image/jpeg',
+          token: TOKEN,
+          groupId: item.groupId,
+          groupPage,
+          groupTotal
+        })
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || '不明なエラー');
@@ -460,6 +675,8 @@ async function sendQueue() {
 
   const successCount = results.filter(Boolean).length;
   capturedQueue = capturedQueue.filter((item, i) => !results[i]);
+  const remainingIds = new Set(capturedQueue.map(it => it.id));
+  Array.from(selectedItemIds).forEach(id => { if (!remainingIds.has(id)) selectedItemIds.delete(id); });
   renderQueue();
 
   if (successCount === total) {
@@ -542,6 +759,9 @@ btnSwitch.addEventListener('click', () => {
 });
 btnShoot.addEventListener('click', shoot);
 btnRetake.addEventListener('click', retakeLast);
+btnBurstStart.addEventListener('click', startBurstMode);
+btnBurstEnd.addEventListener('click', endBurstMode);
+btnBulkUngroup.addEventListener('click', () => ungroupItems(Array.from(selectedItemIds)));
 btnSend.addEventListener('click', sendQueue);
 btnSendFiles.addEventListener('click', sendFiles);
 
